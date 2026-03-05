@@ -1,9 +1,9 @@
 package vault_provider_go
 
 type Config struct {
-	VaultAddr string `yaml:"vault_addr"`
-	RoleName  string `yaml:"role_name"`
-	AuthPath  string `yaml:"auth_path"` // e.g., "oidc" or "kubernetes"
+	VaultAddr string `yaml:"vault_addr" mapstructure:"vault_addr"`
+	RoleName  string `yaml:"role_name" mapstructure:"role_name"`
+	AuthPath  string `yaml:"auth_path" mapstructure:"auth_path"` // e.g., "oidc" or "kubernetes"
 }
 
 // defaultVaultAddr returns the default Vault address when not set in config.
