@@ -1,0 +1,15 @@
+# Vault provider configuration (this library). All fields are optional.
+# Defaults: vault_addr "http://127.0.0.1:8200",
+#           role_name "default", auth_path "oidc" (local) / "kubernetes" (in-cluster).
+
+vault_addr: "https://vault.example.com"
+role_name: "default"
+auth_path: "oidc"   # optional; defaults to "oidc" locally, "kubernetes" in K8s
+
+# ---
+# Example app config that uses placeholders (your app struct, not this lib's config):
+# Any string field set to "vault:path#key" will be replaced with the secret at that path/key.
+#
+# database:
+#   url: "vault:app/data/myapp/credentials#database_url"
+# api_key: "vault:app/data/myapp/credentials#api_key"
