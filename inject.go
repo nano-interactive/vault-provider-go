@@ -8,10 +8,12 @@ import (
 
 const vaultPrefix = "vault:"
 
-// InjectSecrets walks appConfig (must be a pointer to a struct) and replaces any string
-// value that exactly matches "vault:path#key" with the secret from Vault at path, key.
-// If appConfig is nil or contains no placeholders, returns nil without contacting Vault.
-// When placeholders exist, the provider initializes the Vault client and auth on first use.
+// InjectSecrets walks appConfig and replaces any string value that exactly matches
+// "vault:path#key" with the secret from Vault at path, key. appConfig must be a
+// pointer to a struct, map, slice, or interface{} containing one of those (e.g.
+// arbitrary YAML decoded into interface{}). If appConfig is nil or contains no
+// placeholders, returns nil without contacting Vault. When placeholders exist,
+// the provider initializes the Vault client and auth on first use.
 func (vp *VaultProvider) InjectSecrets(ctx context.Context, appConfig interface{}) error {
 	if appConfig == nil {
 		return nil
@@ -22,7 +24,13 @@ func (vp *VaultProvider) InjectSecrets(ctx context.Context, appConfig interface{
 		return nil
 	}
 	v = v.Elem()
-	if v.Kind() != reflect.Struct {
+	if v.Kind() == reflect.Interface && !v.IsNil() {
+		v = v.Elem()
+	}
+	switch v.Kind() {
+	case reflect.Struct, reflect.Map, reflect.Slice:
+		// supported root types
+	default:
 		return nil
 	}
 
@@ -43,6 +51,11 @@ func hasAnyPlaceholder(v reflect.Value) bool {
 		_, _, ok := parsePlaceholder(v.String())
 		return ok
 	case reflect.Pointer:
+		if v.IsNil() {
+			return false
+		}
+		return hasAnyPlaceholder(v.Elem())
+	case reflect.Interface:
 		if v.IsNil() {
 			return false
 		}
@@ -69,6 +82,9 @@ func hasAnyPlaceholder(v reflect.Value) bool {
 		iter := v.MapRange()
 		for iter.Next() {
 			val := iter.Value()
+			if val.Kind() == reflect.Interface && !val.IsNil() {
+				val = val.Elem()
+			}
 			if val.Kind() == reflect.String {
 				if _, _, ok := parsePlaceholder(val.String()); ok {
 					return true
@@ -100,6 +116,25 @@ func (vp *VaultProvider) injectSecretsRecurse(ctx context.Context, v reflect.Val
 			return nil
 		}
 		return vp.injectSecretsRecurse(ctx, v.Elem())
+	case reflect.Interface:
+		if v.IsNil() {
+			return nil
+		}
+		elem := v.Elem()
+		if elem.Kind() == reflect.String {
+			s := elem.String()
+			if path, key, ok := parsePlaceholder(s); ok {
+				secret, err := vp.readSecretAt(ctx, path, key)
+				if err != nil {
+					return err
+				}
+				if v.CanSet() {
+					v.Set(reflect.ValueOf(secret))
+				}
+			}
+			return nil
+		}
+		return vp.injectSecretsRecurse(ctx, elem)
 	case reflect.Struct:
 		for i := 0; i < v.NumField(); i++ {
 			f := v.Field(i)
@@ -122,6 +157,9 @@ func (vp *VaultProvider) injectSecretsRecurse(ctx context.Context, v reflect.Val
 		iter := v.MapRange()
 		for iter.Next() {
 			val := iter.Value()
+			if val.Kind() == reflect.Interface && !val.IsNil() {
+				val = val.Elem()
+			}
 			if val.Kind() == reflect.String {
 				s := val.String()
 				if path, key, ok := parsePlaceholder(s); ok {

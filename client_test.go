@@ -110,3 +110,81 @@ func TestInjectSecrets_NoPlaceholders_NoVaultCall(t *testing.T) {
 		t.Error("InjectSecrets with no placeholders should not create Client")
 	}
 }
+
+func TestInjectSecrets_Mock_MapRoot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{
+			"data": map[string]interface{}{
+				"data": map[string]interface{}{
+					"api_key": "secret-from-map-root",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &Config{VaultAddr: server.URL}
+	cfg = applyDefaults(cfg)
+	client, err := vault.New(vault.WithAddress(cfg.VaultAddr))
+	if err != nil {
+		t.Fatalf("vault.New: %v", err)
+	}
+	vp := &VaultProvider{Client: client, Config: cfg}
+
+	m := map[string]interface{}{
+		"api_key": "vault:myapp/config#api_key",
+		"plain":   "unchanged",
+	}
+
+	err = vp.InjectSecrets(context.Background(), &m)
+	if err != nil {
+		t.Fatalf("InjectSecrets failed: %v", err)
+	}
+	if m["api_key"] != "secret-from-map-root" {
+		t.Errorf("expected api_key to be replaced, got %q", m["api_key"])
+	}
+	if m["plain"] != "unchanged" {
+		t.Errorf("plain should be unchanged, got %q", m["plain"])
+	}
+}
+
+func TestInjectSecrets_Mock_PointerToInterfaceMap(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{
+			"data": map[string]interface{}{
+				"data": map[string]interface{}{
+					"token": "injected-token",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	providerCfg := &Config{VaultAddr: server.URL}
+	providerCfg = applyDefaults(providerCfg)
+	client, err := vault.New(vault.WithAddress(providerCfg.VaultAddr))
+	if err != nil {
+		t.Fatalf("vault.New: %v", err)
+	}
+	vp := &VaultProvider{Client: client, Config: providerCfg}
+
+	var appCfg interface{} = map[string]interface{}{
+		"secret": "vault:some/path#token",
+	}
+
+	err = vp.InjectSecrets(context.Background(), &appCfg)
+	if err != nil {
+		t.Fatalf("InjectSecrets failed: %v", err)
+	}
+	got, _ := appCfg.(map[string]interface{})
+	if got == nil {
+		t.Fatal("config should still be a map")
+	}
+	if got["secret"] != "injected-token" {
+		t.Errorf("expected secret to be replaced, got %q", got["secret"])
+	}
+}
