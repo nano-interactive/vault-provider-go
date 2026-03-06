@@ -72,3 +72,41 @@ func TestInjectSecrets_Mock(t *testing.T) {
 		t.Errorf("non-placeholder string should be unchanged, got %q", appCfg.Plain)
 	}
 }
+
+func TestNew_NoVaultContact(t *testing.T) {
+	vp, err := New(nil)
+	if err != nil {
+		t.Fatalf("New(nil) should not fail: %v", err)
+	}
+	if vp == nil {
+		t.Fatal("New(nil) should return non-nil provider")
+	}
+	if vp.Client != nil {
+		t.Error("New(nil) should not set Client; init is lazy")
+	}
+	if vp.Config == nil {
+		t.Error("New(nil) should set Config from defaults")
+	}
+}
+
+func TestInjectSecrets_NoPlaceholders_NoVaultCall(t *testing.T) {
+	vp, err := New(nil)
+	if err != nil {
+		t.Fatalf("New(nil): %v", err)
+	}
+	type AppConfig struct {
+		Plain string
+	}
+	appCfg := &AppConfig{Plain: "leave-me-unchanged"}
+
+	err = vp.InjectSecrets(context.Background(), appCfg)
+	if err != nil {
+		t.Fatalf("InjectSecrets with no placeholders should not fail: %v", err)
+	}
+	if appCfg.Plain != "leave-me-unchanged" {
+		t.Errorf("config should be unchanged, got %q", appCfg.Plain)
+	}
+	if vp.Client != nil {
+		t.Error("InjectSecrets with no placeholders should not create Client")
+	}
+}

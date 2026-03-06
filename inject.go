@@ -10,11 +10,9 @@ const vaultPrefix = "vault:"
 
 // InjectSecrets walks appConfig (must be a pointer to a struct) and replaces any string
 // value that exactly matches "vault:path#key" with the secret from Vault at path, key.
-// When client is nil or appConfig is nil, returns nil without error.
+// If appConfig is nil or contains no placeholders, returns nil without contacting Vault.
+// When placeholders exist, the provider initializes the Vault client and auth on first use.
 func (vp *VaultProvider) InjectSecrets(ctx context.Context, appConfig interface{}) error {
-	if vp.Client == nil {
-		return nil
-	}
 	if appConfig == nil {
 		return nil
 	}
@@ -28,7 +26,61 @@ func (vp *VaultProvider) InjectSecrets(ctx context.Context, appConfig interface{
 		return nil
 	}
 
+	if !hasAnyPlaceholder(v) {
+		return nil
+	}
+	if err := vp.ensureClient(ctx); err != nil {
+		return err
+	}
 	return vp.injectSecretsRecurse(ctx, v)
+}
+
+// hasAnyPlaceholder reports whether the reflect value (or any nested string) contains
+// a vault:path#key placeholder. Same shape as injectSecretsRecurse but read-only.
+func hasAnyPlaceholder(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.String:
+		_, _, ok := parsePlaceholder(v.String())
+		return ok
+	case reflect.Pointer:
+		if v.IsNil() {
+			return false
+		}
+		return hasAnyPlaceholder(v.Elem())
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			f := v.Field(i)
+			if !f.CanSet() {
+				continue
+			}
+			if hasAnyPlaceholder(f) {
+				return true
+			}
+		}
+		return false
+	case reflect.Slice:
+		for i := 0; i < v.Len(); i++ {
+			if hasAnyPlaceholder(v.Index(i)) {
+				return true
+			}
+		}
+		return false
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			val := iter.Value()
+			if val.Kind() == reflect.String {
+				if _, _, ok := parsePlaceholder(val.String()); ok {
+					return true
+				}
+			} else if hasAnyPlaceholder(val) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 func (vp *VaultProvider) injectSecretsRecurse(ctx context.Context, v reflect.Value) error {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/vault-client-go"
@@ -13,49 +14,57 @@ import (
 type VaultProvider struct {
 	Client *vault.Client
 	Config *Config
+
+	initOnce sync.Once
+	initErr  error
 }
 
+// New returns a VaultProvider with config applied. It does not contact Vault.
+// The client is created and auth runs lazily on the first InjectSecrets call
+// that finds at least one vault:path#key placeholder in the config.
 func New(cfg *Config) (*VaultProvider, error) {
 	cfg = applyDefaults(cfg)
+	return &VaultProvider{Config: cfg}, nil
+}
 
-	ctx := context.TODO()
-	vCfg := vault.DefaultConfiguration()
-	vCfg.Address = cfg.VaultAddr
+// ensureClient creates the Vault client and runs auth if not already done.
+// If Client is already set (e.g. by tests), it returns nil without changing it.
+// Safe for concurrent use; only one init runs.
+func (vp *VaultProvider) ensureClient(ctx context.Context) error {
+	if vp.Client != nil {
+		return nil
+	}
+	vp.initOnce.Do(func() {
+		vp.initErr = vp.doInit(ctx)
+	})
+	return vp.initErr
+}
 
-	// Create a custom HTTP client that refuses to follow redirects.
-	// This prevents the "at most one redirect is allowed" error during OIDC.
+func (vp *VaultProvider) doInit(ctx context.Context) error {
 	httpClient := &http.Client{
 		Timeout: 10 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			// This is the magic: tell Go NOT to follow any redirects.
-			// It will return the 302 response to the SDK instead of following it.
 			return http.ErrUseLastResponse
 		},
 	}
-
 	client, err := vault.New(
-		vault.WithAddress(cfg.VaultAddr),
+		vault.WithAddress(vp.Config.VaultAddr),
 		vault.WithHTTPClient(httpClient),
 		vault.WithRequestTimeout(10*time.Second),
 	)
 	if err != nil {
-		return nil, err
+		return err
 	}
-
-	vp := &VaultProvider{Client: client, Config: cfg}
-
-	// Determine Environment
+	vp.Client = client
 	if isKubernetes() {
 		err = vp.authKubernetes(ctx)
 	} else {
 		err = vp.authLocal(ctx)
 	}
-
 	if err != nil {
-		return nil, fmt.Errorf("auth failed: %w", err)
+		return fmt.Errorf("auth failed: %w", err)
 	}
-
-	return vp, nil
+	return nil
 }
 
 func isKubernetes() bool {

@@ -11,6 +11,7 @@ A small Go library that fetches [HashiCorp Vault](https://www.vaultproject.io/) 
 ## Features
 
 - **Config injection**: Pass a pointer to your config struct; any string field set to `vault:path#key` is replaced with the secret from Vault (in place).
+- **Lazy init**: The library does not contact Vault until at least one `vault:path#key` placeholder is present in your config. If there are no placeholders, `InjectSecrets` returns immediately and provider config is unused—no enable flag needed; you can always call `New` + `InjectSecrets`.
 - **Optional config**: All provider settings have defaults; you can pass `nil` or only override what you need.
 - **Dual run mode**: In-cluster uses Kubernetes auth; on a developer machine uses OIDC (browser). No extra configuration required.
 
@@ -74,6 +75,10 @@ is replaced with the secret at that Vault path and key. The library walks your c
 
 Both KV v1 and KV v2 engines are supported (v2 nesting under `data` is handled automatically).
 
+## Lazy initialization
+
+`New(cfg)` only applies defaults and never contacts Vault. The client is created and auth runs on the first `InjectSecrets` call that finds at least one placeholder. If your config has no placeholders, `InjectSecrets` returns `nil` without touching Vault, so provider config does not matter in that case. Auth errors (e.g. unreachable Vault, bad credentials) are returned from `InjectSecrets`, not from `New`.
+
 ## Optional configuration
 
 You can pass a partial or full config. Empty fields are filled from defaults.
@@ -128,7 +133,7 @@ Same code and config work in both environments; override `AuthPath` only if your
 ```text
 .
 ├── config.go          # Config struct, defaults, applyDefaults
-├── client.go          # New(), VaultProvider, readSecretAt, isKubernetes
+├── client.go          # New(), ensureClient (lazy), VaultProvider, readSecretAt, isKubernetes
 ├── inject.go          # InjectSecrets, placeholder parsing, reflection walk
 ├── auth_local.go      # OIDC flow (browser, ~/.vault-token)
 ├── auth_k8s.go        # Kubernetes JWT login

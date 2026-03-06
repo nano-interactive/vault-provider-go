@@ -40,3 +40,35 @@ func TestIntegration_InjectSecrets(t *testing.T) {
 		t.Error("SecretField is empty after inject")
 	}
 }
+
+func TestIntegration_NoPlaceholders_NoVaultContact(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+
+	cfg := &Config{
+		VaultAddr: "https://vault-api-staging.nanointeractive.com",
+		RoleName:  "default",
+		AuthPath:  "oidc",
+	}
+	vp, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New(cfg): %v", err)
+	}
+
+	type AppConfig struct {
+		Plain string
+	}
+	appCfg := &AppConfig{Plain: "no-vault-placeholder"}
+
+	err = vp.InjectSecrets(context.Background(), appCfg)
+	if err != nil {
+		t.Fatalf("InjectSecrets with no placeholders should not fail: %v", err)
+	}
+	if appCfg.Plain != "no-vault-placeholder" {
+		t.Errorf("config should be unchanged, got %q", appCfg.Plain)
+	}
+	if vp.Client != nil {
+		t.Error("with no placeholders, Client should never be created")
+	}
+}
